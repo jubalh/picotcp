@@ -36,17 +36,19 @@
 #define PICO_ND_OPT_MTU                5
 
 /* advertisement flags */
-#define PICO_ND_ROUTER_BIT             31u
-#define PICO_ND_SOLICITED_BIT          30u
-#define PICO_ND_OVERRIDE_BIT           29u
-#define IS_ROUTER(x) (long_be(x->msg.info.neigh_adv.rsor) & (1u << PICO_ND_ROUTER_BIT)) /* router flag set? */
-#define IS_SOLICITED(x) (long_be(x->msg.info.neigh_adv.rsor) & (1u << PICO_ND_SOLICITED_BIT)) /* solicited flag set? */
-#define IS_OVERRIDE(x) (long_be(x->msg.info.neigh_adv.rsor) & (1u << PICO_ND_OVERRIDE_BIT)) /* override flag set? */
+#define PICO_ND_ROUTER             0x80000000
+#define PICO_ND_SOLICITED          0x40000000
+#define PICO_ND_OVERRIDE           0x20000000
+#define IS_ROUTER(x) (long_be(x->msg.info.neigh_adv.rsor) & (PICO_ND_ROUTER))           /* router flag set? */
+#define IS_SOLICITED(x) (long_be(x->msg.info.neigh_adv.rsor) & (PICO_ND_SOLICITED))     /* solicited flag set? */
+#define IS_OVERRIDE(x) (long_be(x->msg.info.neigh_adv.rsor) & (PICO_ND_OVERRIDE))   /* override flag set? */
 
 #define PICO_ND_PREFIX_LIFETIME_INF    0xFFFFFFFFu
 #define PICO_ND_DESTINATION_LRU_TIME   600000u /* msecs (10min) */
 
 #define nd_dbg(...) do {} while(0)
+
+static struct pico_frame *frames_queued_v6[PICO_ND_MAX_FRAMES_QUEUED] = { };
 
 
 enum pico_ipv6_neighbor_state {
@@ -86,6 +88,20 @@ static struct pico_ipv6_neighbor *pico_nd_find_neighbor(struct pico_ip6 *dst)
     return pico_tree_findKey(&NCache, &test);
 }
 
+static void pico_ipv6_nd_queued_trigger(void)
+{
+    int i;
+    struct pico_frame *f;
+    for (i = 0; i < PICO_ND_MAX_FRAMES_QUEUED; i++) 
+    {
+        f = frames_queued_v6[i];
+        if (f) {
+            pico_ethernet_send(f);
+            frames_queued_v6[i] = NULL;
+        }
+    }
+}
+
 static struct pico_ipv6_neighbor *pico_nd_add(struct pico_ip6 *addr, struct pico_device *dev)
 {
     struct pico_ipv6_neighbor *n = PICO_ZALLOC(sizeof(struct pico_ipv6_neighbor));
@@ -98,7 +114,33 @@ static struct pico_ipv6_neighbor *pico_nd_add(struct pico_ip6 *addr, struct pico
     memcpy(&n->address, addr, sizeof(struct pico_ip6));
     n->dev = dev;
     pico_tree_insert(&NCache, n);
+    pico_ipv6_nd_queued_trigger();
     return n;
+}
+
+static void pico_ipv6_nd_unreachable(struct pico_ip6 *a)
+{
+    int i;
+    struct pico_frame *f;
+    struct pico_ipv6_hdr *hdr;
+    struct pico_ip6 dst;
+    for (i = 0; i < PICO_ND_MAX_FRAMES_QUEUED; i++) 
+    {
+        f = frames_queued_v6[i];
+        if (f) {
+            hdr = (struct pico_ipv6_hdr *) f->net_hdr;
+            dst = pico_ipv6_route_get_gateway(&hdr->dst);
+            if (pico_ipv6_is_unspecified(dst.addr))
+                dst = hdr->dst;
+            if (memcmp(dst.addr, a->addr, PICO_SIZE_IP6) == 0) {
+                if (!pico_source_is_local(f)) {
+                    pico_notify_dest_unreachable(f);
+                }
+                pico_frame_discard(f);
+                frames_queued_v6[i] = NULL;
+            }
+        }
+    }
 }
 
 static void pico_nd_new_expire_time(struct pico_ipv6_neighbor *n)
@@ -127,6 +169,7 @@ static void pico_nd_discover(struct pico_ipv6_neighbor *n)
         return;
 
     if (++n->failure_count > PICO_ND_MAX_SOLICIT) {
+        pico_ipv6_nd_unreachable(&n->address);
         pico_tree_delete(&NCache, n);
         return;
     }
@@ -502,6 +545,21 @@ struct pico_eth *pico_ipv6_get_neighbor(struct pico_frame *f)
 
     return pico_nd_get(&hdr->dst, f->dev);
 }
+
+void pico_ipv6_nd_postpone(struct pico_frame *f)
+{
+    int i;
+    for (i = 0; i < PICO_ND_MAX_FRAMES_QUEUED; i++) 
+    {
+        if (!frames_queued_v6[i]) {
+            frames_queued_v6[i] = f;
+            return;
+        }
+    }
+    /* Not possible to enqueue: discard packet */
+    pico_frame_discard(f);
+}
+
 
 int pico_ipv6_nd_recv(struct pico_frame *f)
 {

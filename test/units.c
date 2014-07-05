@@ -187,13 +187,13 @@ Suite *pico_suite(void)
     suite_add_tcase(s, ipv6);
 #endif
 
-    tcase_add_test(arp, arp_check_pending_test);
     tcase_add_test(arp, arp_update_max_arp_reqs_test);
     tcase_add_test(arp, arp_compare_test);
     tcase_add_test(arp, arp_lookup_test);
     tcase_add_test(arp, arp_expire_test);
     tcase_add_test(arp, arp_receive_test);
     tcase_add_test(arp, arp_get_test);
+    tcase_add_test(arp, tc_pico_arp_queue);
     suite_add_tcase(s, arp);
 
     return s;

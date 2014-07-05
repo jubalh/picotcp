@@ -74,7 +74,12 @@ endif
 
 ifneq ($(RTOS),0)
   CFLAGS+=-DPICO_SUPPORT_RTOS
-  OPTIONS+=-DPICO_SUPPORT_RTOS
+endif
+
+ifeq ($(ARCH),stm32f4xx)
+  CFLAGS+=-mcpu=cortex-m4 \
+  -mthumb -mlittle-endian -mfpu=fpv4-sp-d16 \
+  -mfloat-abi=hard -mthumb-interwork -fsingle-precision-constant -DSTM32
 endif
 
 ifeq ($(ARCH),stm32)
@@ -90,7 +95,7 @@ ifeq ($(ARCH),stm32_gc)
 endif
 
 ifeq ($(ARCH),faulty)
-  CFLAGS+=-DFAULTY
+  CFLAGS+=-DFAULTY -DUNIT_TEST
   UNITS_OBJ+=test/pico_faulty.o
   TEST_OBJ+=test/pico_faulty.o
   DUMMY_EXTRA+=test/pico_faulty.o
@@ -102,6 +107,15 @@ ifeq ($(ARCH),stm32-softfloat)
   -mfloat-abi=soft -mthumb-interwork \
   -DSTM32
 endif
+
+
+ifeq ($(ARCH),stm32f1xx)
+  CFLAGS+=-mcpu=cortex-m3 \
+	-mthumb -mlittle-endian \
+	-mthumb-interwork \
+	-DSTM32F1
+endif
+
 
 ifeq ($(ARCH),msp430)
   CFLAGS+=-DMSP430
@@ -293,7 +307,7 @@ units: mod core lib $(UNITS_OBJ)
 	@echo -e "\n\t[UNIT TESTS SUITE]"
 	@mkdir -p $(PREFIX)/test
 	@echo -e "\t[CC] units.o"
-	@$(CC) -c -o $(PREFIX)/test/units.o test/units.c $(CFLAGS) -I stack -I modules -I includes -I test/unit 
+	@$(CC) -c -o $(PREFIX)/test/units.o test/units.c $(CFLAGS) -I stack -I modules -I includes -I test/unit -DUNIT_TEST
 	@echo -e "\t[LD] $(PREFIX)/test/units"
 	@$(CC) -o $(PREFIX)/test/units $(CFLAGS) $(PREFIX)/test/units.o -lcheck -lm -pthread -lrt $(UNITS_OBJ) 
 	@$(CC) -o $(PREFIX)/test/modunit_pico_protocol.elf $(CFLAGS) -I. test/unit/modunit_pico_protocol.c stack/pico_tree.c -lcheck -lm -pthread -lrt $(UNITS_OBJ)
